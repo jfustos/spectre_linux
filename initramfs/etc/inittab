@@ -1,0 +1,3 @@
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mount -t tmpfs tmpfs /tmpfs
+/dev/ttyS0::sysinit:-/bin/busybox ash
