@@ -1201,6 +1201,120 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
 	return true;
 }
 
+static int emulate_mm_fault( struct vm_area_struct *vma, unsigned long address,
+                             unsigned int flags, struct pt_regs *regs )
+{
+    uint8_t byte;
+    uint8_t * instr_address;
+    uint8_t * data_address;
+    unsigned long page_offset = address & ~PAGE_MASK;
+    
+    instr_address = (uint8_t *)regs->ip;
+    data_address = (uint8_t *)((unsigned long)vma->private_page + page_offset);
+    
+    if( copy_from_user( &byte, instr_address++, 1 ) )
+        return VM_FAULT_SIGSEGV;
+    
+    switch( byte )
+    {
+        case 0x0f:
+        {
+            if( copy_from_user( &byte, instr_address++, 1 ) )
+                return VM_FAULT_SIGSEGV;
+            
+            switch( byte )
+            {
+                case 0xb6:
+                {
+                    if( copy_from_user( &byte, instr_address++, 1 ) )
+                        return VM_FAULT_SIGSEGV;
+                    
+                    switch( byte )
+                    {
+                        case 0x00:
+                        {
+                            regs->ax = (unsigned long)(*data_address);
+                            regs->ip += 3;
+                            return 0;
+                        }
+                        break;
+                        
+                        case 0x12:
+                        {
+                            regs->dx = (unsigned long)(*data_address);
+                            regs->ip += 3;
+                            return 0;
+                        }
+                        break;
+                        
+                        default: break;
+                    }
+                }
+                break;
+                
+                default: break;
+            }
+        }
+        break;
+        
+        case 0x88:
+        {
+            if( copy_from_user( &byte, instr_address++, 1 ) )
+                return VM_FAULT_SIGSEGV;
+            
+            switch( byte )
+            {
+                case 0x10:
+                {
+                    *data_address = (uint8_t)(regs->dx);
+                    regs->ip += 2;
+                    return 0;
+                }
+                break;
+                
+                default: break;
+            }
+        }
+        break;
+        
+        case 0xc6:
+        {
+            if( copy_from_user( &byte, instr_address++, 1 ) )
+                return VM_FAULT_SIGSEGV;
+            
+            switch( byte )
+            {
+                case 0x00:
+                {
+                    if( copy_from_user( &byte, instr_address++, 1 ) )
+                        return VM_FAULT_SIGSEGV;
+                    
+                    switch( byte )
+                    {
+                        case 0x00:
+                        {
+                            *data_address = 0;
+                            regs->ip += 3;
+                            return 0;
+                        }
+                        break;
+                        
+                        default: break;
+                    }
+                }
+                break;
+                
+                default: break;
+            }
+        }
+        break;
+        
+        default: break;
+    }
+    
+    return VM_FAULT_SIGSEGV;
+}
+
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -1391,7 +1505,14 @@ good_area:
 	 * fault, so we read the pkey beforehand.
 	 */
 	pkey = vma_pkey(vma);
-	fault = handle_mm_fault(vma, address, flags);
+    if( vma->vm_flags & VM_WB_ON_RETIRE )
+    {
+        fault = emulate_mm_fault( vma, address, flags, regs );
+    }
+    else
+    {
+	    fault = handle_mm_fault(vma, address, flags);
+    }
 	major |= fault & VM_FAULT_MAJOR;
 
 	/*

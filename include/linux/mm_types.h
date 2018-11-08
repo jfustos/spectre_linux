@@ -280,6 +280,9 @@ struct vm_area_struct {
 	 * get_unmapped_area find a free area of the right size.
 	 */
 	unsigned long rb_subtree_gap;
+    
+    /* A pointer to the private page used with MAP_WB_ON_RETIRE */
+    void * private_page;
 
 	/* Second cache line starts here. */
 

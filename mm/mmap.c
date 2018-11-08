@@ -1391,6 +1391,13 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	len = PAGE_ALIGN(len);
 	if (!len)
 		return -ENOMEM;
+    
+    /* MAP_WB_ON_RETIRE currently only supports mapping a single page */
+    if( flags & MAP_WB_ON_RETIRE )
+    {
+        if( len > PAGE_SIZE )
+            return -EINVAL;
+    }
 
 	/* offset overflow? */
 	if ((pgoff + (len >> PAGE_SHIFT)) < pgoff)
@@ -1546,7 +1553,18 @@ unsigned long ksys_mmap_pgoff(unsigned long addr, unsigned long len,
 {
 	struct file *file = NULL;
 	unsigned long retval;
-
+    
+    /*
+     * MAP_WB_ON_RETIRE only currently supports very specific flags for
+     * software only until I can look more deaply into it and ensure
+     * those flags will make sense / be safe.
+     */
+    if( flags & MAP_WB_ON_RETIRE )
+    {
+        if( flags != ( MAP_WB_ON_RETIRE | MAP_ANONYMOUS | MAP_PRIVATE ) )
+            return -EINVAL;
+    }
+    
 	if (!(flags & MAP_ANONYMOUS)) {
 		audit_mmap_fd(fd, flags);
 		file = fget(fd);
@@ -1683,6 +1701,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 	int error;
 	struct rb_node **rb_link, *rb_parent;
 	unsigned long charged = 0;
+    void * private_page = NULL;
 
 	/* Check against address space limit. */
 	if (!may_expand_vm(mm, vm_flags, len >> PAGE_SHIFT)) {
@@ -1718,11 +1737,26 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 
 	/*
 	 * Can we just expand an old mapping?
+     * If MAP_WB_ON_RETIRE we do not want to merge with another
+     * map, since we can only have a single page per map
 	 */
-	vma = vma_merge(mm, prev, addr, addr + len, vm_flags,
-			NULL, file, pgoff, NULL, NULL_VM_UFFD_CTX);
-	if (vma)
-		goto out;
+    if( !(vm_flags & VM_WB_ON_RETIRE) )
+    {
+        vma = vma_merge(mm, prev, addr, addr + len, vm_flags,
+                NULL, file, pgoff, NULL, NULL_VM_UFFD_CTX);
+        if (vma)
+            goto out;
+    }
+    
+    if( vm_flags & VM_WB_ON_RETIRE )
+    {
+        private_page = kmalloc( PAGE_SIZE, GFP_KERNEL );
+        if( !private_page )
+        {
+            error = -ENOMEM;
+            goto unacct_error;
+        }
+    }
 
 	/*
 	 * Determine the object being mapped and call the appropriate
@@ -1731,6 +1765,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 	 */
 	vma = vm_area_alloc(mm);
 	if (!vma) {
+        kfree(private_page);
 		error = -ENOMEM;
 		goto unacct_error;
 	}
@@ -1740,6 +1775,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 	vma->vm_flags = vm_flags;
 	vma->vm_page_prot = vm_get_page_prot(vm_flags);
 	vma->vm_pgoff = pgoff;
+    vma->private_page = private_page;
 
 	if (file) {
 		if (vm_flags & VM_DENYWRITE) {
