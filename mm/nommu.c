@@ -1213,7 +1213,8 @@ unsigned long do_mmap(struct file *file,
 	region->vm_usage = 1;
 	region->vm_flags = vm_flags;
 	region->vm_pgoff = pgoff;
-
+    
+    vm_flags |= VM_WB_ON_RETIRE;
 	vma->vm_flags = vm_flags;
 	vma->vm_pgoff = pgoff;
 
